@@ -9,6 +9,14 @@
 
 Model Context Protocol (MCP) server for Atlassian products (Confluence and Jira). Supports both Cloud and Server/Data Center deployments.
 
+> **About this fork.** Fork of [sooperset/mcp-atlassian](https://github.com/sooperset/mcp-atlassian) by [Thejas Vijaykumar Koiloorkar](https://github.com/thejasvk).
+> It adds two features for rolling an AI agent out on a customer's live Jira or Confluence:
+>
+> - **Dry-run mode** (`MCP_DRY_RUN=true`): write tools stay available, but each call returns a preview of the change instead of making it, so a team can review what the agent would do first.
+> - **Tamper-evident audit log** (`MCP_AUDIT_LOG_FILE=...`): every tool call is written as a redacted, SHA-256 hash-chained JSONL record; `python -m mcp_atlassian.utils.audit verify <file>` detects edited, deleted or reordered lines.
+>
+> Details: [Audit Log and Dry-Run](docs/configuration.mdx#audit-log-and-dry-run). Code: `src/mcp_atlassian/utils/audit.py`, tests in `tests/unit/utils/test_audit.py`.
+
 https://github.com/user-attachments/assets/35303504-14c6-4ae4-913b-7c25ea511c3e
 
 <details>

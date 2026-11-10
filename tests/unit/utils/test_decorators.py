@@ -1,4 +1,5 @@
 import inspect
+import json
 import logging
 from unittest.mock import MagicMock
 
@@ -18,10 +19,10 @@ from mcp_atlassian.utils.decorators import (
 
 
 class DummyContext:
-    def __init__(self, read_only):
+    def __init__(self, read_only, *, dry_run=False):
         self.request_context = MagicMock()
         self.request_context.lifespan_context = {
-            "app_lifespan_context": MagicMock(read_only=read_only)
+            "app_lifespan_context": MagicMock(read_only=read_only, dry_run=dry_run)
         }
 
 
@@ -46,6 +47,37 @@ async def test_check_write_access_allows_in_writable():
     ctx = DummyContext(read_only=False)
     result = await dummy_tool(ctx, 4)
     assert result == 8
+
+
+@pytest.mark.asyncio
+async def test_check_write_access_previews_in_dry_run():
+    calls = []
+
+    @check_write_access
+    async def create_issue(ctx, summary, api_token=None):
+        calls.append(summary)
+        return "created"
+
+    ctx = DummyContext(read_only=False, dry_run=True)
+    result = await create_issue(ctx, summary="Fix login", api_token="abc123")
+    preview = json.loads(result)
+    assert calls == []
+    assert preview["dry_run"] is True
+    assert preview["tool"] == "create_issue"
+    assert preview["would_call_with"]["summary"] == "Fix login"
+    assert preview["would_call_with"]["api_token"] == "***"
+
+
+@pytest.mark.asyncio
+async def test_check_write_access_read_only_beats_dry_run():
+    @check_write_access
+    async def dummy_tool(ctx, x):
+        return x
+
+    ctx = DummyContext(read_only=True, dry_run=True)
+    with pytest.raises(ToolError) as exc:
+        await dummy_tool(ctx, 1)
+    assert "read-only mode" in str(exc.value)
 
 
 @pytest.mark.asyncio

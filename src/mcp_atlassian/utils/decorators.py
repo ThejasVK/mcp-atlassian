@@ -1,3 +1,4 @@
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
@@ -13,6 +14,7 @@ from fastmcp.tools.function_tool import ToolMeta
 from requests.exceptions import HTTPError
 
 from mcp_atlassian.exceptions import MCPAtlassianAuthenticationError
+from mcp_atlassian.utils.audit import redact
 from mcp_atlassian.utils.toolsets import TOOLSET_TAG_PREFIX
 
 logger = logging.getLogger(__name__)
@@ -115,7 +117,8 @@ def handle_tool_errors(func: F) -> F:
 def check_write_access(func: F) -> F:
     """
     Decorator for FastMCP tools to check if the application is in read-only mode.
-    If in read-only mode, it raises a ToolError.
+    If in read-only mode, it raises a ToolError. In dry-run mode it returns a
+    JSON preview of the call (redacted arguments) instead of running the tool.
     Also catches unhandled exceptions and re-raises them as ToolError with
     descriptive error messages.
     Assumes the decorated function is async and has `ctx: Context` as its
@@ -140,6 +143,24 @@ def check_write_access(func: F) -> F:
             logger.warning(f"Attempted to call tool '{tool_name}' in read-only mode.")
             message = f"Cannot {action_description} in read-only mode."
             raise ValueError(message)
+
+        dry_run = getattr(app_lifespan_ctx, "dry_run", False) is True
+        if app_lifespan_ctx is not None and dry_run:
+            logger.info(f"Dry-run: previewing '{tool_name}' without calling the API.")
+            return json.dumps(
+                {
+                    "dry_run": True,
+                    "tool": tool_name,
+                    "message": (
+                        f"Dry-run mode is on, so '{tool_name}' was not executed. "
+                        "This is the change it would make. Unset MCP_DRY_RUN "
+                        "to run it for real."
+                    ),
+                    "would_call_with": redact(kwargs),
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
 
         return await func(ctx, *args, **kwargs)
 

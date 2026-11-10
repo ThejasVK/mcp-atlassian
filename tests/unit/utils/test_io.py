@@ -6,7 +6,29 @@ from unittest.mock import patch
 
 import pytest
 
-from mcp_atlassian.utils.io import is_read_only_mode, validate_safe_path
+from mcp_atlassian.utils.io import (
+    is_dry_run_mode,
+    is_read_only_mode,
+    validate_safe_path,
+)
+
+
+def test_is_dry_run_mode_default():
+    """Dry-run is off unless MCP_DRY_RUN is set."""
+    with patch.dict(os.environ, clear=True):
+        assert is_dry_run_mode() is False
+
+
+@pytest.mark.parametrize("value", ["true", "1", "yes", "on", "Y"])
+def test_is_dry_run_mode_truthy(value):
+    """Dry-run accepts the same extended truthy values as READ_ONLY_MODE."""
+    with patch.dict(os.environ, {"MCP_DRY_RUN": value}):
+        assert is_dry_run_mode() is True
+
+
+def test_is_dry_run_mode_false():
+    with patch.dict(os.environ, {"MCP_DRY_RUN": "false"}):
+        assert is_dry_run_mode() is False
 
 
 def test_is_read_only_mode_default():

@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, Literal, Optional
@@ -24,6 +25,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from mcp_atlassian.confluence.config import ConfluenceConfig
 from mcp_atlassian.jira.config import JiraConfig
+from mcp_atlassian.utils.audit import AuditLogger, get_audit_logger
 from mcp_atlassian.utils.credential_command import (
     deferred_pat_outranks,
     get_resolver,
@@ -32,6 +34,7 @@ from mcp_atlassian.utils.env import is_env_truthy
 from mcp_atlassian.utils.environment import get_available_services
 from mcp_atlassian.utils.io import (
     configure_file_root_for_transport,
+    is_dry_run_mode,
     is_read_only_mode,
 )
 from mcp_atlassian.utils.logging import mask_sensitive
@@ -151,6 +154,7 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
     has_deferred_jira_auth = resolver.has_deferred_credentials("jira")
     has_deferred_confluence_auth = resolver.has_deferred_credentials("confluence")
     read_only = is_read_only_mode()
+    dry_run = is_dry_run_mode() and not read_only
     enabled_tools = get_enabled_tools()
     enabled_toolsets = get_enabled_toolsets()
 
@@ -227,10 +231,14 @@ async def main_lifespan(app: FastMCP[MainAppContext]) -> AsyncIterator[dict[str,
         has_deferred_jira_auth=deferred_jira_wins,
         has_deferred_confluence_auth=deferred_confluence_wins,
         read_only=read_only,
+        dry_run=dry_run,
         enabled_tools=enabled_tools,
         enabled_toolsets=enabled_toolsets,
     )
     logger.info(f"Read-only mode: {'ENABLED' if read_only else 'DISABLED'}")
+    logger.info(f"Dry-run mode: {'ENABLED' if dry_run else 'DISABLED'}")
+    if get_audit_logger() is not None:
+        logger.info("Tool-call audit log: ENABLED")
     logger.info(f"Enabled tools filter: {enabled_tools or 'All tools enabled'}")
     logger.info(f"Enabled toolsets filter: {sorted(enabled_toolsets)}")
 
@@ -441,16 +449,69 @@ class AtlassianMCP(ErrorPreservingFastMCP[MainAppContext]):
         # Under an active filter context, denials and genuinely unknown tools raise
         # byte-identical messages here (no exists-but-disabled leak), decoupled from
         # upstream's error format (FastMCP uses a repr-quoted name).
-        ctx = self._tool_filter_context()
-        if ctx is not None:
-            tool_obj = await self.get_tool(key)
-            if (
+        audit = get_audit_logger()
+        started = time.perf_counter()
+        is_write = False
+        try:
+            ctx = self._tool_filter_context()
+            tool_obj = None
+            if ctx is not None:
+                tool_obj = await self.get_tool(key)
+            elif audit is not None:
+                try:
+                    tool_obj = await self.get_tool(key)
+                except Exception:  # noqa: BLE001 - unknown tools fail below as usual
+                    tool_obj = None
+            is_write = tool_obj is not None and "write" in (tool_obj.tags or set())
+            if ctx is not None and (
                 tool_obj is None
                 or not self._is_tool_authorized(key, tool_obj, ctx)
                 or not self._is_tool_supported_on_deployment(tool_obj, ctx)
             ):
                 raise NotFoundError(f"Unknown tool: {key}")
-        return await super()._call_tool_mcp(key, arguments)
+            result = await super()._call_tool_mcp(key, arguments)
+        except Exception as e:
+            if audit is not None:
+                self._audit_tool_call(
+                    audit,
+                    key,
+                    arguments,
+                    started,
+                    is_write=is_write,
+                    outcome="denied" if isinstance(e, NotFoundError) else "error",
+                    error=str(e) or type(e).__name__,
+                )
+            raise
+        if audit is not None:
+            self._audit_tool_call(
+                audit, key, arguments, started, is_write=is_write, outcome="ok"
+            )
+        return result
+
+    @staticmethod
+    def _audit_tool_call(
+        audit: AuditLogger,
+        key: str,
+        arguments: dict[str, Any],
+        started: float,
+        *,
+        is_write: bool,
+        outcome: str,
+        error: str | None = None,
+    ) -> None:
+        """Write one audit record; a logging failure never fails the tool call."""
+        try:
+            audit.record(
+                tool=key,
+                arguments=arguments,
+                outcome=outcome,
+                duration_ms=(time.perf_counter() - started) * 1000,
+                write=is_write,
+                dry_run=is_write and is_dry_run_mode() and not is_read_only_mode(),
+                error=error,
+            )
+        except Exception as audit_error:  # noqa: BLE001
+            logger.error(f"Failed to write audit record for '{key}': {audit_error}")
 
     def http_app(
         self,

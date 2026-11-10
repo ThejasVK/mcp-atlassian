@@ -4,7 +4,7 @@ This package provides various utility functions used throughout the codebase.
 """
 
 from .date import parse_date
-from .io import is_read_only_mode, validate_safe_path
+from .io import is_dry_run_mode, is_read_only_mode, validate_safe_path
 
 # Export lifecycle utilities
 from .lifecycle import (
@@ -37,6 +37,7 @@ __all__ = [
     "configure_ssl_verification",
     "is_atlassian_cloud_url",
     "is_image_attachment",
+    "is_dry_run_mode",
     "is_read_only_mode",
     "validate_safe_path",
     "setup_logging",

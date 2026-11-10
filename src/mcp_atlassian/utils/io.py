@@ -36,6 +36,22 @@ def is_read_only_mode() -> bool:
     return is_env_extended_truthy("READ_ONLY_MODE", "false")
 
 
+def is_dry_run_mode() -> bool:
+    """Check if write tools should preview their changes instead of running.
+
+    Dry-run mode keeps write tools visible and callable, but each call returns
+    a description of the change it would make (tool name and redacted
+    arguments) without contacting Jira or Confluence. This lets you rehearse an
+    agent workflow against a customer's real instance before allowing writes.
+    ``READ_ONLY_MODE`` takes precedence: in read-only mode write tools stay
+    hidden and blocked.
+
+    Returns:
+        True if dry-run mode is enabled, False otherwise
+    """
+    return is_env_extended_truthy("MCP_DRY_RUN", "false")
+
+
 def default_files_dir() -> Path:
     """Return the dedicated default file directory for remote transports.
 

@@ -21,5 +21,6 @@ class MainAppContext:
     has_deferred_jira_auth: bool = False
     has_deferred_confluence_auth: bool = False
     read_only: bool = False
+    dry_run: bool = False
     enabled_tools: list[str] | None = None
     enabled_toolsets: set[str] | None = None

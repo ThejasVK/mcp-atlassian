@@ -240,7 +240,9 @@ class TestFileRoot:
         monkeypatch.chdir("/")
         root = reset_file_root.configure_file_root_for_transport("stdio")
         assert root == Path("/")
-        assert validate_safe_path("/etc/hostname") == Path("/etc/hostname")
+        # resolve(): on macOS /etc is a symlink to /private/etc
+        expected = Path("/etc/hostname").resolve()
+        assert validate_safe_path("/etc/hostname") == expected
 
     def test_is_in_cwd_root(self, reset_file_root, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
